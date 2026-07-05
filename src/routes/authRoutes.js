@@ -8,32 +8,53 @@ const pool = require('../db/pool');
 router.post('/register', async (req, res) => {
   const { name, email, password, role } = req.body;
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
     // 1. Check if email already exists
-    const existing = await pool.query(
+    const existing = await client.query(
       'SELECT id FROM users WHERE email = $1',
       [email]
     );
     if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Email already registered' });
     }
 
     // 2. Hash the password
     const password_hash = await bcrypt.hash(password, 10);
 
-    // 3. Insert into users table
-    const result = await pool.query(
+    // 3. Insert into users
+    const userResult = await client.query(
       `INSERT INTO users (name, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
        RETURNING id, name, email, role`,
       [name, email, password_hash, role]
     );
 
-    res.status(201).json({ user: result.rows[0] });
+    const newUser = userResult.rows[0];
+
+    // 4. If role is 'dealer', also create a matching dealers row
+    if (role === 'dealer') {
+      await client.query(
+        `INSERT INTO dealers (user_id, business_name)
+         VALUES ($1, $2)`,
+        [newUser.id, `${name}'s Business`]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json({ user: newUser });
 
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
