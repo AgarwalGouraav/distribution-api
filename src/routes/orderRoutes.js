@@ -6,7 +6,6 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 // POST /orders — dealer places an order
 router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
   const { items } = req.body;
-  // items = [ { product_id: 1, quantity: 5 }, { product_id: 3, quantity: 2 } ]
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: 'Order must contain at least one item' });
@@ -17,14 +16,12 @@ router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Get dealer_id from the logged-in user's userId
     const dealerResult = await client.query(
       'SELECT id FROM dealers WHERE user_id = $1',
       [req.user.userId]
     );
     const dealerId = dealerResult.rows[0].id;
 
-    // 2. Create the order shell (total_amount = 0 for now, filled in after items)
     const orderResult = await client.query(
       `INSERT INTO orders (dealer_id, status, total_amount)
        VALUES ($1, 'pending', 0)
@@ -35,7 +32,6 @@ router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
 
     let totalAmount = 0;
 
-    // 3. Insert each order_item with a price snapshot
     for (const item of items) {
       const productResult = await client.query(
         'SELECT wholesale_price FROM products WHERE id = $1',
@@ -57,7 +53,6 @@ router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
       totalAmount += unitPrice * item.quantity;
     }
 
-    // 4. Update order with the real total
     await client.query(
       'UPDATE orders SET total_amount = $1 WHERE id = $2',
       [totalAmount, orderId]
@@ -116,7 +111,6 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
   try {
     await client.query('BEGIN');
 
-    // Lock the order row so no one else can approve/reject it at the same time
     const orderResult = await client.query(
       `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
       [orderId]
@@ -134,14 +128,12 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
       return res.status(400).json({ error: `Order already ${order.status}` });
     }
 
-// Get all items in this order
     const itemsResult = await client.query(
       `SELECT * FROM order_items WHERE order_id = $1`,
       [orderId]
     );
     const items = itemsResult.rows;
 
-    // Get dealer's state (to prefer a same-state warehouse)
     const dealerResult = await client.query(
       `SELECT state FROM dealers WHERE id = $1`,
       [order.dealer_id]
@@ -150,7 +142,6 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
 
     let selectedWarehouseId = null;
 
-    // Try dealer's own state first, then any warehouse with enough stock for ALL items
     const warehousesResult = await client.query(
       `SELECT id, state FROM warehouses ORDER BY (state = $1) DESC`,
       [dealerState]
@@ -184,7 +175,6 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
       return res.status(400).json({ error: 'No warehouse has enough stock for this order' });
     }
 
-    // Deduct stock from the selected warehouse
     for (const item of items) {
       await client.query(
         `UPDATE inventory SET quantity = quantity - $1
@@ -199,7 +189,6 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
       );
     }
 
-    // Update the order: approved, assign warehouse, set due_date
     await client.query(
       `UPDATE orders
        SET status = 'approved', warehouse_id = $1, due_date = $2, updated_at = NOW()
@@ -207,7 +196,6 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
       [selectedWarehouseId, due_date, orderId]
     );
 
-    // Log this in the ledger
     await client.query(
       `INSERT INTO ledger (dealer_id, type, amount, reference_id)
        VALUES ($1, 'order_placed', $2, $3)`,
@@ -216,6 +204,49 @@ router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, 
 
     await client.query('COMMIT');
     res.json({ message: 'Order approved successfully', warehouse_id: selectedWarehouseId, due_date });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// PUT /orders/:id/reject — distributor only
+router.put('/:id/reject', verifyToken, requireRole('distributor'), async (req, res) => {
+  const orderId = req.params.id;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
+      `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
+      [orderId]
+    );
+
+    if (orderResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const order = orderResult.rows[0];
+
+    if (order.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Order already ${order.status}` });
+    }
+
+    await client.query(
+      `UPDATE orders SET status = 'rejected', updated_at = NOW() WHERE id = $1`,
+      [orderId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ message: 'Order rejected successfully' });
 
   } catch (err) {
     await client.query('ROLLBACK');

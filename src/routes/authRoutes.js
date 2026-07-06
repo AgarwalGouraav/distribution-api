@@ -13,7 +13,6 @@ router.post('/register', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Check if email already exists
     const existing = await client.query(
       'SELECT id FROM users WHERE email = $1',
       [email]
@@ -23,10 +22,8 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // 2. Hash the password
     const password_hash = await bcrypt.hash(password, 10);
 
-    // 3. Insert into users
     const userResult = await client.query(
       `INSERT INTO users (name, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
@@ -36,7 +33,6 @@ router.post('/register', async (req, res) => {
 
     const newUser = userResult.rows[0];
 
-    // 4. If role is 'dealer', also create a matching dealers row
     if (role === 'dealer') {
       await client.query(
         `INSERT INTO dealers (user_id, business_name)
@@ -63,7 +59,6 @@ router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // 1. Find user by email
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
@@ -74,13 +69,11 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
 
-    // 2. Compare password against stored hash
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // 3. Create JWT token
     const token = jwt.sign(
       { userId: user.id, role: user.role },
       process.env.JWT_SECRET,
