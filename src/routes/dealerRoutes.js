@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 const { verifyToken } = require('../middleware/auth');
+const { computeRiskMetrics, computeDecision } = require('../services/riskService');
+const { generateReasons } = require('../services/llmService');
 
 // GET /dealers/:id/balance
 router.get('/:id/balance', verifyToken, async (req, res) => {
@@ -67,6 +69,29 @@ router.get('/:id/ledger', verifyToken, async (req, res) => {
 
     res.json(result.rows);
 
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+const { computeRiskMetrics, computeDecision } = require('../services/riskService');
+const { generateReasons } = require('../services/llmService');
+
+// GET /dealers/:id/risk-analysis — distributor only
+router.get('/:id/risk-analysis', verifyToken, requireRole('distributor'), async (req, res) => {
+  const dealerId = req.params.id;
+  try {
+    const metrics = await computeRiskMetrics(dealerId);
+    const decision = computeDecision(metrics);
+    const reasons = await generateReasons(metrics, decision);
+
+    res.json({
+      risk: decision.risk,
+      recommendation: decision.recommendation,
+      reasons,
+      metrics
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
