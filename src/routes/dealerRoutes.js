@@ -75,9 +75,6 @@ router.get('/:id/ledger', verifyToken, async (req, res) => {
   }
 });
 
-const { computeRiskMetrics, computeDecision } = require('../services/riskService');
-const { generateReasons } = require('../services/llmService');
-
 // GET /dealers/:id/risk-analysis — distributor only
 router.get('/:id/risk-analysis', verifyToken, requireRole('distributor'), async (req, res) => {
   const dealerId = req.params.id;
