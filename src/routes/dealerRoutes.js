@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken ,requireRole } = require('../middleware/auth');
 const { computeRiskMetrics, computeDecision } = require('../services/riskService');
 const { generateReasons } = require('../services/llmService');
 
