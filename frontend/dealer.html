@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dealer Portal — Distribution API</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background: #121212; color: #e0e0e0; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 40px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; font-size: 14px; }
+  input, select { padding: 6px; background: #1e1e1e; color: #e0e0e0; border: 1px solid #444; }
+  button { padding: 8px 14px; background: #333; color: #e0e0e0; border: 1px solid #555; cursor: pointer; margin-top: 10px; }
+  #logout { float: right; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  #error, #orderMsg { margin-top: 10px; font-size: 14px; display: none; }
+  #error { color: #ff6b6b; }
+  #orderMsg { color: #6bff8f; }
+  .summary { display: flex; gap: 30px; margin-top: 12px; font-size: 14px; }
+  .summary div { background: #1e1e1e; padding: 10px 16px; border: 1px solid #333; }
+</style>
+</head>
+<body>
+
+<button id="logout">Log Out</button>
+<h1>Dealer Portal</h1>
+<p id="dealerName"></p>
+
+<h2>Place Order</h2>
+<div id="cartRows"></div>
+<button id="addRow">+ Add Product</button>
+<br>
+<button id="submitOrder">Submit Order</button>
+<p id="orderMsg"></p>
+<p id="error"></p>
+
+<h2>Account Summary</h2>
+<div class="summary" id="summary"></div>
+
+<h2>Order History</h2>
+<table>
+  <thead><tr><th>ID</th><th>Status</th><th>Total</th><th>Due Date</th><th>Created</th></tr></thead>
+  <tbody id="ordersBody"></tbody>
+</table>
+
+<h2>Ledger</h2>
+<table>
+  <thead><tr><th>Type</th><th>Amount</th><th>Ref</th><th>Date</th></tr></thead>
+  <tbody id="ledgerBody"></tbody>
+</table>
+
+<script>
+  const API_BASE_URL = "https://distribution-api-ctre.onrender.com";
+  const token = localStorage.getItem('token');
+  if (!token || localStorage.getItem('role') !== 'dealer') {
+    window.location.href = 'index.html';
+  }
+
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  const errorEl = document.getElementById('error');
+  const orderMsgEl = document.getElementById('orderMsg');
+
+  document.getElementById('logout').onclick = () => {
+    localStorage.clear();
+    window.location.href = 'index.html';
+  };
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+
+  let products = [];
+  let dealer = null;
+
+  async function init() {
+    try {
+      const [dealerRes, productsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/dealers/me`, { headers }),
+        fetch(`${API_BASE_URL}/products`, { headers })
+      ]);
+
+      dealer = await dealerRes.json();
+      products = await productsRes.json();
+
+      if (!dealerRes.ok) throw new Error(dealer.error || 'Failed to load dealer info');
+
+      document.getElementById('dealerName').textContent =
+        `${dealer.business_name} — Repayment Score: ${dealer.repayment_score}`;
+
+      addRow();
+      loadBalance();
+      loadOrders();
+      loadLedger();
+
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  function addRow() {
+    const div = document.createElement('div');
+    div.className = 'row';
+    const options = products.map(p => {
+      const stock = p.quantity != null ? `${p.quantity} in stock (${p.state})` : 'Out of stock';
+      return `<option value="${p.id}">${p.name} — ₹${p.wholesale_price} — ${stock}</option>`;
+    }).join('');
+    div.innerHTML = `
+      <select class="prod">${options}</select>
+      <input type="number" class="qty" min="1" value="1" style="width:60px">
+    `;
+    document.getElementById('cartRows').appendChild(div);
+  }
+  document.getElementById('addRow').onclick = addRow;
+
+  document.getElementById('submitOrder').onclick = async () => {
+    errorEl.style.display = 'none';
+    orderMsgEl.style.display = 'none';
+
+    const rows = document.querySelectorAll('#cartRows .row');
+    const items = Array.from(rows).map(row => ({
+      product_id: Number(row.querySelector('.prod').value),
+      quantity: Number(row.querySelector('.qty').value)
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Order failed');
+
+      orderMsgEl.textContent = `Order #${data.orderId} placed — total ₹${data.totalAmount}`;
+      orderMsgEl.style.display = 'block';
+      loadOrders();
+
+    } catch (err) {
+      showError(err.message);
+    }
+  };
+
+  async function loadBalance() {
+    const res = await fetch(`${API_BASE_URL}/dealers/${dealer.id}/balance`, { headers });
+    const data = await res.json();
+    if (!res.ok) return showError(data.error);
+
+    document.getElementById('summary').innerHTML = `
+      <div>Total Ordered<br><strong>₹${data.total_ordered}</strong></div>
+      <div>Total Paid<br><strong>₹${data.total_paid}</strong></div>
+      <div>Outstanding<br><strong>₹${data.outstanding_balance}</strong></div>
+    `;
+  }
+
+  async function loadOrders() {
+    const res = await fetch(`${API_BASE_URL}/orders`, { headers });
+    const data = await res.json();
+    if (!res.ok) return showError(data.error);
+
+    document.getElementById('ordersBody').innerHTML = data.map(o => `
+      <tr>
+        <td>${o.id}</td>
+        <td>${o.status}</td>
+        <td>₹${o.total_amount}</td>
+        <td>${o.due_date ? new Date(o.due_date).toLocaleDateString() : '—'}</td>
+        <td>${new Date(o.created_at).toLocaleDateString()}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadLedger() {
+    const res = await fetch(`${API_BASE_URL}/dealers/${dealer.id}/ledger`, { headers });
+    const data = await res.json();
+    if (!res.ok) return showError(data.error);
+
+    document.getElementById('ledgerBody').innerHTML = data.map(l => `
+      <tr>
+        <td>${l.type}</td>
+        <td>₹${l.amount}</td>
+        <td>${l.reference_id ?? '—'}</td>
+        <td>${new Date(l.created_at).toLocaleDateString()}</td>
+      </tr>
+    `).join('');
+  }
+
+  init();
+</script>
+
+</body>
+</html>

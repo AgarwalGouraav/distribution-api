@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Distributor Dashboard — Distribution API</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #121212; color: #e0e0e0; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 40px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; font-size: 14px; vertical-align: top; }
+  input, select { padding: 6px; background: #1e1e1e; color: #e0e0e0; border: 1px solid #444; }
+  button { padding: 6px 12px; background: #333; color: #e0e0e0; border: 1px solid #555; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #logout { float: right; }
+  #error { margin-top: 10px; font-size: 14px; color: #ff6b6b; display: none; }
+  .risk-box { margin-top: 6px; padding: 8px; background: #1e1e1e; border: 1px solid #333; font-size: 13px; max-width: 320px; }
+  .risk-high { border-left: 3px solid #ff6b6b; }
+  .risk-medium { border-left: 3px solid #e3b341; }
+  .risk-low { border-left: 3px solid #6bff8f; }
+  .reasons { margin: 6px 0 0 16px; padding: 0; font-size: 12.5px; color: #aaa; }
+  .approve-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .approve-row input[type="date"] { width: 140px; }
+  .status-pending { color: #e3b341; }
+  .status-approved { color: #6bff8f; }
+  .status-rejected { color: #ff6b6b; }
+</style>
+</head>
+<body>
+
+<button id="logout">Log Out</button>
+<h1>Distributor Dashboard</h1>
+<p><a href="payment.html">Record Payment →</a></p>
+
+<h2>Orders</h2>
+<p id="error"></p>
+<table>
+  <thead>
+    <tr><th>ID</th><th>Dealer</th><th>Total</th><th>Status</th><th>Created</th><th>Risk</th><th>Action</th></tr>
+  </thead>
+  <tbody id="ordersBody"></tbody>
+</table>
+
+<script>
+  const API_BASE_URL = "https://distribution-api-ctre.onrender.com";
+  const token = localStorage.getItem('token');
+  if (!token || localStorage.getItem('role') !== 'distributor') {
+    window.location.href = 'index.html';
+  }
+
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  const errorEl = document.getElementById('error');
+
+  document.getElementById('logout').onclick = () => {
+    localStorage.clear();
+    window.location.href = 'index.html';
+  };
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+
+  let orders = [];
+  let warehouses = [];
+
+  async function init() {
+    try {
+      const [ordersRes, warehousesRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/orders`, { headers }),
+        fetch(`${API_BASE_URL}/warehouses`, { headers })
+      ]);
+      orders = await ordersRes.json();
+      warehouses = await warehousesRes.json();
+      if (!ordersRes.ok) throw new Error(orders.error || 'Failed to load orders');
+      if (!warehousesRes.ok) throw new Error(warehouses.error || 'Failed to load warehouses');
+
+      render();
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  function warehouseOptions() {
+    return warehouses.map(w => `<option value="${w.id}">${w.name} (${w.state})</option>`).join('');
+  }
+
+  function render() {
+    document.getElementById('ordersBody').innerHTML = orders.map(o => `
+      <tr>
+        <td>${o.id}</td>
+        <td>${o.business_name}</td>
+        <td>₹${o.total_amount}</td>
+        <td class="status-${o.status}">${o.status}</td>
+        <td>${new Date(o.created_at).toLocaleDateString()}</td>
+        <td>
+          <button data-risk="${o.id}" data-dealer="${o.dealer_id}" ${o.status !== 'pending' ? 'disabled' : ''}>Get Risk</button>
+          <button data-items="${o.id}">View Items</button>
+          <div id="risk-${o.id}"></div>
+          <div id="items-${o.id}"></div>
+        </td>
+        <td>
+          ${o.status === 'pending' ? `
+            <div class="approve-row">
+              <select id="wh-${o.id}">${warehouseOptions()}</select>
+              <input type="date" id="due-${o.id}">
+              <button data-approve="${o.id}">Approve</button>
+              <button data-reject="${o.id}">Reject</button>
+            </div>
+          ` : '—'}
+        </td>
+      </tr>
+    `).join('');
+
+    document.querySelectorAll('[data-risk]').forEach(btn => {
+      btn.onclick = () => getRisk(btn.dataset.risk, btn.dataset.dealer);
+    });
+    document.querySelectorAll('[data-approve]').forEach(btn => {
+      btn.onclick = () => approveOrder(btn.dataset.approve);
+    });
+    document.querySelectorAll('[data-reject]').forEach(btn => {
+      btn.onclick = () => rejectOrder(btn.dataset.reject);
+    });
+    document.querySelectorAll('[data-items]').forEach(btn => {
+      btn.onclick = () => getItems(btn.dataset.items);
+    });
+  }
+
+  async function getItems(orderId) {
+    const box = document.getElementById(`items-${orderId}`);
+    box.innerHTML = 'Loading...';
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders/${orderId}/items`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load items');
+
+      box.innerHTML = `
+        <ul class="reasons">
+          ${data.map(i => `<li>${i.quantity} × ${i.product_name} @ ₹${i.unit_price}</li>`).join('')}
+        </ul>
+      `;
+    } catch (err) {
+      box.innerHTML = `<span style="color:#ff6b6b">${err.message}</span>`;
+    }
+  }
+
+  async function getRisk(orderId, dealerId) {
+    const box = document.getElementById(`risk-${orderId}`);
+    box.innerHTML = 'Loading...';
+    try {
+      const res = await fetch(`${API_BASE_URL}/dealers/${dealerId}/risk-analysis`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Risk check failed');
+
+      box.innerHTML = `
+        <div class="risk-box risk-${data.risk}">
+          <strong>${data.risk.toUpperCase()} risk — ${data.recommendation}</strong>
+          <ul class="reasons">${data.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+        </div>
+      `;
+    } catch (err) {
+      box.innerHTML = `<span style="color:#ff6b6b">${err.message}</span>`;
+    }
+  }
+
+  async function approveOrder(orderId) {
+    errorEl.style.display = 'none';
+    const warehouse_id = Number(document.getElementById(`wh-${orderId}`).value);
+    const due_date = document.getElementById(`due-${orderId}`).value;
+    if (!due_date) return showError('Pick a due date before approving.');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders/${orderId}/approve`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ warehouse_id, due_date })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Approve failed');
+      init();
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  async function rejectOrder(orderId) {
+    errorEl.style.display = 'none';
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders/${orderId}/reject`, {
+        method: 'PUT',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Reject failed');
+      init();
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  init();
+</script>
+
+</body>
+</html>

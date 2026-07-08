@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Record Payment — Distribution API</title>
+<style>
+  body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #121212; color: #e0e0e0; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 40px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+  label { display: block; margin-top: 14px; font-size: 13px; color: #aaa; }
+  input, select, textarea { width: 100%; padding: 8px; background: #1e1e1e; color: #e0e0e0; border: 1px solid #444; margin-top: 4px; box-sizing: border-box; }
+  button { padding: 8px 16px; background: #333; color: #e0e0e0; border: 1px solid #555; cursor: pointer; margin-top: 18px; }
+  #logout { float: right; }
+  #error, #successMsg { margin-top: 12px; font-size: 14px; display: none; }
+  #error { color: #ff6b6b; }
+  #successMsg { color: #6bff8f; }
+  a { color: #79c0ff; }
+</style>
+</head>
+<body>
+
+<button id="logout">Log Out</button>
+<h1>Record Payment</h1>
+<p><a href="distributor.html">← Back to Orders</a></p>
+
+<label for="order">Order</label>
+<select id="order"></select>
+
+<label for="amount">Amount (₹)</label>
+<input type="number" id="amount" min="0.01" step="0.01">
+
+<label for="paymentDate">Payment Date</label>
+<input type="date" id="paymentDate">
+
+<label for="mode">Payment Mode</label>
+<select id="mode">
+  <option value="cash">Cash</option>
+  <option value="bank_transfer">Bank Transfer</option>
+  <option value="cheque">Cheque</option>
+</select>
+
+<label for="note">Note (optional)</label>
+<textarea id="note" rows="2"></textarea>
+
+<button id="submit">Record Payment</button>
+
+<p id="successMsg"></p>
+<p id="error"></p>
+
+<script>
+  const API_BASE_URL = "https://distribution-api-ctre.onrender.com";
+  const token = localStorage.getItem('token');
+  if (!token || localStorage.getItem('role') !== 'distributor') {
+    window.location.href = 'index.html';
+  }
+
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  const errorEl = document.getElementById('error');
+  const successEl = document.getElementById('successMsg');
+
+  document.getElementById('logout').onclick = () => {
+    localStorage.clear();
+    window.location.href = 'index.html';
+  };
+
+  function showError(msg) {
+    successEl.style.display = 'none';
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+
+  async function loadOrders() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load orders');
+
+      // Only approved orders can take payments — pending/rejected have no due_date logic that makes sense here
+      const payable = data.filter(o => o.status === 'approved');
+
+      if (payable.length === 0) {
+        document.getElementById('order').innerHTML = `<option value="">No approved orders</option>`;
+        document.getElementById('submit').disabled = true;
+        return;
+      }
+
+      document.getElementById('order').innerHTML = payable.map(o =>
+        `<option value="${o.id}">#${o.id} — ${o.business_name} — ₹${o.total_amount} (due ${o.due_date ? new Date(o.due_date).toLocaleDateString() : '—'})</option>`
+      ).join('');
+
+    } catch (err) {
+      showError(err.message);
+    }
+  }
+
+  document.getElementById('submit').onclick = async () => {
+    errorEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    const order_id = Number(document.getElementById('order').value);
+    const amount = Number(document.getElementById('amount').value);
+    const payment_date = document.getElementById('paymentDate').value;
+    const payment_mode = document.getElementById('mode').value;
+    const note = document.getElementById('note').value;
+
+    if (!order_id) return showError('No order selected.');
+    if (!amount || amount <= 0) return showError('Enter a valid amount.');
+    if (!payment_date) return showError('Pick a payment date.');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/payments`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ order_id, amount, payment_date, payment_mode, note })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Payment failed');
+
+      successEl.textContent = `Payment #${data.paymentId} recorded — days late: ${data.daysLate}, new repayment score: ${data.newRepaymentScore}`;
+      successEl.style.display = 'block';
+
+      document.getElementById('amount').value = '';
+      document.getElementById('note').value = '';
+      loadOrders();
+
+    } catch (err) {
+      showError(err.message);
+    }
+  };
+
+  loadOrders();
+</script>
+
+</body>
+</html>

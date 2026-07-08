@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — Distribution API</title>
+<style>
+  body { font-family: sans-serif; max-width: 400px; margin: 60px auto; padding: 0 20px; background: #121212; color: #e0e0e0; }
+  input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; background: #1e1e1e; color: #e0e0e0; border: 1px solid #444; }
+  button { background: #333; color: #e0e0e0; border: 1px solid #555; }
+  h1 { font-size: 20px; margin-bottom: 20px; }
+  label { display: block; margin-top: 12px; font-size: 14px; }
+  input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+  button { margin-top: 20px; padding: 10px 16px; width: 100%; }
+  #error { color: red; margin-top: 12px; font-size: 14px; display: none; }
+</style>
+</head>
+<body>
+
+<h1>Login</h1>
+
+<form id="loginForm">
+  <label>Email
+    <input type="email" id="email" required>
+  </label>
+  <label>Password
+    <input type="password" id="password" required>
+  </label>
+  <button type="submit">Log In</button>
+</form>
+
+<p id="error"></p>
+
+<script>
+  const API_BASE_URL = "https://distribution-api-ctre.onrender.com";
+
+  const form = document.getElementById('loginForm');
+  const errorEl = document.getElementById('error');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.style.display = 'none';
+
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        errorEl.textContent = data.error || 'Login failed';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('role', data.role);
+
+      if (data.role === 'dealer') {
+        window.location.href = 'dealer.html';
+      } else {
+        window.location.href = 'distributor.html';
+      }
+
+    } catch (err) {
+      errorEl.textContent = 'Network error — is the backend reachable?';
+      errorEl.style.display = 'block';
+    }
+  });
+</script>
+
+</body>
+</html>
