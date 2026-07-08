@@ -101,6 +101,38 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
+// GET /orders/:id/items — line items for one order (dealer: own orders only, distributor: any)
+router.get('/:id/items', verifyToken, async (req, res) => {
+  const orderId = req.params.id;
+
+  try {
+    if (req.user.role === 'dealer') {
+      const check = await pool.query(
+        `SELECT o.id FROM orders o
+         JOIN dealers d ON d.id = o.dealer_id
+         WHERE o.id = $1 AND d.user_id = $2`,
+        [orderId, req.user.userId]
+      );
+      if (check.rows.length === 0) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    const result = await pool.query(
+      `SELECT oi.quantity, oi.unit_price, p.name AS product_name
+       FROM order_items oi
+       JOIN products p ON p.id = oi.product_id
+       WHERE oi.order_id = $1`,
+      [orderId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // PUT /orders/:id/approve — distributor only
 router.put('/:id/approve', verifyToken, requireRole('distributor'), async (req, res) => {
   const orderId = req.params.id;

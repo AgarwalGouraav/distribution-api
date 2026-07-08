@@ -5,6 +5,12 @@ const { verifyToken ,requireRole } = require('../middleware/auth');
 const { computeRiskMetrics, computeDecision } = require('../services/riskService');
 const { generateReasons } = require('../services/llmService');
 
+// GET /dealers/me
+router.get('/me', verifyToken, requireRole('dealer'), async (req, res) => {
+  const result = await pool.query('SELECT id, business_name, credit_limit, repayment_score FROM dealers WHERE user_id = $1', [req.user.userId]);
+  res.json(result.rows[0]);
+});
+
 // GET /dealers/:id/balance
 router.get('/:id/balance', verifyToken, async (req, res) => {
   const dealerId = req.params.id;
