@@ -11,6 +11,12 @@ router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
     return res.status(400).json({ error: 'Order must contain at least one item' });
   }
 
+  for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      return res.status(400).json({ error: 'Quantity must be a positive integer' });
+    }
+  }
+
   const client = await pool.connect();
 
   try {
@@ -38,9 +44,10 @@ router.post('/', verifyToken, requireRole('dealer'), async (req, res) => {
         [item.product_id]
       );
 
-      if (productResult.rows.length === 0) {
-        throw new Error(`Product ${item.product_id} not found`);
-      }
+    if (productResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Product ${item.product_id} does not exist` });
+        }
 
       const unitPrice = productResult.rows[0].wholesale_price;
 
