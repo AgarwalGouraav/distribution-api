@@ -1,11 +1,14 @@
 const express = require('express');
 const app = express();
+const cors = require('cors');
+
+app.use(express.json());
+app.use(cors());
+
 require('dotenv').config();
 
 const startOverdueCheck = require('./jobs/overdueCheck');
 startOverdueCheck();
-
-app.use(express.json());
 
 const authRoutes = require('./routes/authRoutes');
 app.use('/auth', authRoutes);
