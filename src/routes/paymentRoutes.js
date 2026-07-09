@@ -28,6 +28,30 @@ router.post('/', verifyToken, requireRole('distributor'), async (req, res) => {
 
     const order = orderResult.rows[0];
 
+       if (order.status !== 'approved' && order.status !== 'overdue') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Cannot record payment — order status is '${order.status}'` });
+    }
+
+    if (amount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Payment amount must be positive' });
+    }
+
+    const paidSoFarResult = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total_paid FROM payments WHERE order_id = $1`,
+      [order_id]
+    );
+    const alreadyPaid = Number(paidSoFarResult.rows[0].total_paid);
+    const remainingOwed = Number(order.total_amount) - alreadyPaid;
+
+    if (amount > remainingOwed) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Payment exceeds amount owed. Remaining balance on this order: ₹${remainingOwed}`
+      });
+    }
+
     let daysLate = 0;
     if (order.due_date) {
       const due = new Date(order.due_date);
@@ -68,6 +92,14 @@ router.post('/', verifyToken, requireRole('distributor'), async (req, res) => {
       `UPDATE dealers SET repayment_score = $1 WHERE id = $2`,
       [avgScore, order.dealer_id]
     );
+
+    const newTotalPaid = alreadyPaid + Number(amount);
+        if (order.status === 'overdue' && newTotalPaid >= Number(order.total_amount)) {
+          await client.query(
+            `UPDATE orders SET status = 'approved', updated_at = NOW() WHERE id = $1`,
+            [order_id]
+          );
+        }
 
     await client.query('COMMIT');
 
